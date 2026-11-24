@@ -15,10 +15,10 @@ const App = (() => {
   const ROTULO_TIPO = { Point: 'Ponto', LineString: 'Linha', Polygon: 'Polígono' };
   const PREFIXO = { Point: 'P', LineString: 'L', Polygon: 'A' };
   const PASTAS = [
-    { id: 'Vetores', ic: '⬠', desc: 'SHP, KML, GeoJSON, GPX, CSV' },
-    { id: 'Imagens e Raster', ic: '🛰', desc: 'GeoTIFF, ortofotos, imagens' },
+    { id: 'Projetos QGIS', ic: '🗺', desc: 'Pacotes .zip e GeoPackage' },
+    { id: 'Vetores', ic: '⬠', desc: 'SHP, GPKG, KML, GeoJSON, GPX, CSV' },
+    { id: 'Imagens e Raster', ic: '🛰', desc: 'GeoTIFF, ortofotos' },
     { id: 'Documentos', ic: '📄', desc: 'PDF, planilhas, textos' },
-    { id: 'Fotos de campo', ic: '📷', desc: 'Fotos dos registros' },
     { id: 'Outros', ic: '📦', desc: 'Demais arquivos' }
   ];
 
@@ -382,7 +382,10 @@ const App = (() => {
         <button class="btn primario" onclick="App.baixarExport('geojson')">GeoJSON (QGIS)</button>
         <button class="btn primario" onclick="App.baixarExport('kml')">KML (Google Earth)</button>
         <button class="btn primario" onclick="App.baixarExport('csv')">CSV (planilha)</button>
-      </div>`);
+      </div>
+      <h3>Projeto completo</h3>
+      <p class="mudo">Pacote .zip com GeoPackage (pontos, linhas, polígonos e fotos), fotos, camadas importadas, caderneta e projeto .qgs pronto para abrir no QGIS.</p>
+      <button class="btn primario" onclick="App.fecharModal();App.exportarQGIS()">⇩ Exportar projeto para QGIS (.zip)</button>`);
   }
   function featureCollection() {
     return {
@@ -496,7 +499,7 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
           linhas.forEach((l, i) => cx.fillText(l, x0, yUlt - (linhas.length - 1 - i) * lh, w * 0.62));
           // logo no canto inferior direito
           if (logo) {
-            const lw = Math.round(Math.max(w, h) * 0.18), lhh = Math.round(lw * logo.naturalHeight / logo.naturalWidth);
+            const lw = Math.round(Math.max(w, h) * 0.11), lhh = Math.round(lw * logo.naturalHeight / logo.naturalWidth);
             cx.shadowColor = 'rgba(255,255,255,.9)'; cx.shadowBlur = fs * 0.5; cx.shadowOffsetX = 0; cx.shadowOffsetY = 0;
             cx.drawImage(logo, w - lw - fs * 0.9, h - lhh - fs * 0.6, lw, lhh);
           }
@@ -544,6 +547,7 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
   /* ======================= IA ======================= */
   function painelIA(campo) {
     return `<div class="linha-btns" style="margin:-4px 0 6px">
+      <button class="btn peq ia" id="mic-${campo}" onclick="App.ditar('${campo}')">🎤 Falar</button>
       <button class="btn peq ia" onclick="App.ia('${campo}','melhorar')">✨ Melhorar texto</button>
       <button class="btn peq" onclick="App.ia('${campo}','tecnico')">Linguagem técnica</button>
       <button class="btn peq" onclick="App.ia('${campo}','topicos')">Organizar em tópicos</button>
@@ -560,16 +564,78 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
     alvo.innerHTML = '<div class="caixa-info">✨ A IA está revisando o texto…</div>';
     try {
       const novo = await API.ia(texto, modo, ctx);
-      alvo.innerHTML = `<div class="ia-comp"><div class="bloco novo" id="ia-res-${campo}" contenteditable="true">${esc(novo)}</div>
-        <div class="linha-btns fim"><small class="mudo esp">Revise antes de aplicar — você pode editar a sugestão acima.</small>
-        <button class="btn peq" onclick="this.closest('.ia-comp').remove()">Descartar</button>
-        <button class="btn peq primario" onclick="App.aplicarIA('${campo}')">Usar sugestão</button></div></div>`;
+      mostrarSugestao(campo, novo, false);
     } catch (e) { alvo.innerHTML = `<div class="caixa-info" style="color:var(--vermelho)">${esc(e.message)}</div>`; }
   }
-  function aplicarIA(campo) {
+  /* ---------- ditado por áudio ---------- */
+  let gravacao = null;
+  async function ditar(campo) {
+    const btn = $('#mic-' + campo);
+    if (gravacao) { gravacao.parar(); return; }
+    if (!navigator.mediaDevices || !window.MediaRecorder) return toast('Gravação de áudio não suportada neste navegador.', true);
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+    catch (e) { return toast('Permita o uso do microfone para ditar.', true); }
+    const rec = new MediaRecorder(stream), partes = [];
+    const inicio = Date.now();
+    rec.ondataavailable = e => e.data.size && partes.push(e.data);
+    const relogio = setInterval(() => {
+      const s = Math.floor((Date.now() - inicio) / 1000);
+      if (btn) btn.textContent = `⏹ Parar ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+      if (s >= 180) gravacao && gravacao.parar();
+    }, 250);
+    gravacao = { parar: () => { clearInterval(relogio); rec.stop(); stream.getTracks().forEach(t => t.stop()); gravacao = null; if (btn) btn.textContent = '🎤 Falar'; } };
+    if (btn) btn.classList.add('gravando-btn');
+    rec.onstop = async () => {
+      if (btn) btn.classList.remove('gravando-btn');
+      const alvo = $('#ia-' + campo);
+      if (!alvo) return;
+      alvo.innerHTML = '<div class="caixa-info">🎤 Transcrevendo e organizando o áudio com a IA…</div>';
+      try {
+        const wav = await paraWav(new Blob(partes, { type: rec.mimeType || 'audio/webm' }));
+        const r = form && form.rec;
+        const ctx = r ? [projeto.nome, r.categoria, r.codigo, r.atividade, r.titulo].filter(Boolean).join(' | ') : projeto.nome;
+        const texto = await API.ia($('#' + campo).value.trim(), 'audio', ctx, { mime: 'audio/wav', base64: await API.blobParaBase64(wav) });
+        mostrarSugestao(campo, texto, true);
+      } catch (e) { alvo.innerHTML = `<div class="caixa-info" style="color:var(--vermelho)">${esc(e.message)}</div>`; }
+    };
+    rec.start(1000);
+    toast('Gravando… fale a descrição e toque em ⏹ Parar.');
+  }
+
+  // converte a gravação para WAV mono 16 kHz (formato aceito pela IA)
+  async function paraWav(blob) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ac = new AC();
+    const buf = await ac.decodeAudioData(await blob.arrayBuffer());
+    ac.close && ac.close();
+    const taxa = 16000, n = Math.ceil(buf.duration * taxa);
+    const off = new OfflineAudioContext(1, n, taxa);
+    const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+    const dados = (await off.startRendering()).getChannelData(0);
+    const dv = new DataView(new ArrayBuffer(44 + dados.length * 2));
+    const str = (o, t) => [...t].forEach((c, i) => dv.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF'); dv.setUint32(4, 36 + dados.length * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, taxa, true);
+    dv.setUint32(28, taxa * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); str(36, 'data'); dv.setUint32(40, dados.length * 2, true);
+    for (let i = 0; i < dados.length; i++) { const v = Math.max(-1, Math.min(1, dados[i])); dv.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true); }
+    return new Blob([dv.buffer], { type: 'audio/wav' });
+  }
+
+  function mostrarSugestao(campo, novo, deAudio) {
+    const temTexto = $('#' + campo).value.trim();
+    $('#ia-' + campo).innerHTML = `<div class="ia-comp"><div class="bloco novo" id="ia-res-${campo}" contenteditable="true">${esc(novo)}</div>
+      <div class="linha-btns fim"><small class="mudo esp">Revise antes de aplicar — você pode editar a sugestão acima.</small>
+      <button class="btn peq" onclick="this.closest('.ia-comp').remove()">Descartar</button>
+      ${deAudio && temTexto ? `<button class="btn peq" onclick="App.aplicarIA('${campo}', true)">Adicionar ao texto</button>` : ''}
+      <button class="btn peq primario" onclick="App.aplicarIA('${campo}')">${deAudio && temTexto ? 'Substituir texto' : 'Usar sugestão'}</button></div></div>`;
+  }
+
+  function aplicarIA(campo, adicionar) {
     const ta = $('#' + campo);
     if (form) form.rec.textoOriginal = form.rec.textoOriginal || ta.value;
-    ta.value = $('#ia-res-' + campo).innerText.trim();
+    const novo = $('#ia-res-' + campo).innerText.trim();
+    ta.value = adicionar && ta.value.trim() ? ta.value.trim() + '\n\n' + novo : novo;
     $('#ia-' + campo).innerHTML = '';
     toast('Texto atualizado. Lembre-se de salvar.');
   }
@@ -724,7 +790,7 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
   /* ======================= ARQUIVOS ======================= */
   const pastaPorExt = nome => {
     const e = Mapa.extensao(nome);
-    if (['geojson', 'json', 'kml', 'kmz', 'gpx', 'zip', 'csv', 'shp', 'dxf'].includes(e)) return 'Vetores';
+    if (['geojson', 'json', 'kml', 'kmz', 'gpx', 'zip', 'csv', 'shp', 'dxf', 'gpkg'].includes(e)) return 'Vetores';
     if (['tif', 'tiff', 'jpg', 'jpeg', 'png', 'ecw', 'jp2'].includes(e)) return 'Imagens e Raster';
     if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'odt', 'ods', 'ppt', 'pptx'].includes(e)) return 'Documentos';
     return 'Outros';
@@ -732,80 +798,137 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
 
   function renderArquivos() {
     const arqs = cache.arquivos;
-    const cont = id => id === 'Fotos de campo' ? cache.fotos.length : arqs.filter(a => a.pasta === id).length;
+    const cont = id => arqs.filter(a => a.pasta === id).length;
     const compart = localStorage.getItem('gc_compartilhar') !== '0';
-    let conteudo;
+    const nTipo = t => cache.feicoes.filter(f => f.tipo === t).length;
+    const card = (ic, nome, n, sub, acao) => `<div class="pasta" onclick="${acao}"><span class="ic">${ic}</span><b>${nome}</b><small>${n} ${sub}</small></div>`;
+    let fotosHtml = '';
     if (pastaArq === 'Fotos de campo') {
       const ref = f => { const r = cache.feicoes.find(x => x.id === f.refId) || cache.caderneta.find(x => x.id === f.refId); return r ? (r.codigo || r.titulo || r.atividade) : ''; };
-      conteudo = cache.fotos.length ? `<div class="galeria">${cache.fotos.map(f => `<div class="ft" data-id="${f.id}" onclick="App.verFoto('${f.id}')"><img alt=""><span>${esc(ref(f))} · ${fmtData(f.dataHora)}</span></div>`).join('')}</div>
-        <div class="linha-btns" style="margin-top:12px"><button class="btn" onclick="App.baixarFotos()">Baixar todas as fotos</button></div>`
-        : '<div class="vazio">As fotos tiradas nos registros aparecem aqui.</div>';
-    } else {
-      const lista = arqs.filter(a => pastaArq === 'Todos' || a.pasta === pastaArq).sort((a, b) => (b.atualizadoEm || 0) - (a.atualizadoEm || 0));
-      conteudo = `
-        <div class="soltar" id="zona-soltar" onclick="App.escolherArquivos('${pastaArq}')">
-          <b>Arraste arquivos aqui</b> ou toque para selecionar<br><small>Shapefile (.zip), KML/KMZ, GeoJSON, GPX, CSV, GeoTIFF, PDF, planilhas…</small></div>
-        <label class="chk" style="margin-top:-6px"><input type="checkbox" id="arq-compart" ${compart ? 'checked' : ''} onchange="localStorage.setItem('gc_compartilhar',this.checked?'1':'0')"> Enviar para o servidor e compartilhar com a equipe do projeto</label>
-        ${lista.length ? `<div style="overflow-x:auto"><table class="tabela"><thead><tr><th>Arquivo</th><th>Pasta</th><th>Tamanho</th><th>Enviado</th><th></th></tr></thead><tbody>
-          ${lista.map(a => `<tr><td><b>${esc(a.nome)}</b><br>${a.local ? '<span class="tag local">só neste aparelho</span>' : a.driveId ? '<span class="tag ok">no servidor</span>' : '<span class="tag pend">aguardando envio</span>'}</td>
-            <td><select style="margin:0;padding:4px" onchange="App.moverArquivo('${a.id}',this.value)">${PASTAS.filter(p => p.id !== 'Fotos de campo').map(p => `<option ${p.id === a.pasta ? 'selected' : ''}>${p.id}</option>`).join('')}</select></td>
-            <td>${a.tamanho ? fmtTam(a.tamanho) : ''}</td><td><small>${esc(a.autorNome || a.autor || '')}<br>${fmtData(a.criadoEm)}</small></td>
-            <td><div class="linha-btns">${Mapa.ehCamada(a.nome) ? `<button class="btn peq primario" onclick="App.arquivoNoMapa('${a.id}')">Mapa</button>` : ''}
-              <button class="btn peq" onclick="App.baixarArquivo('${a.id}')">Baixar</button>
-              <button class="btn peq perigo" onclick="App.excluirArquivo('${a.id}')">✕</button></div></td></tr>`).join('')}
-          </tbody></table></div>` : '<div class="vazio">Nenhum arquivo nesta pasta.</div>'}`;
+      fotosHtml = `<div class="caixa-info" style="background:#fff;border:1px solid var(--borda)">
+        <div class="linha-btns" style="margin-bottom:10px"><b class="esp">Fotos de campo (${cache.fotos.length})</b>
+        ${cache.fotos.length ? '<button class="btn peq" onclick="App.baixarFotos()">Baixar todas (.zip)</button>' : ''}<button class="btn peq" onclick="App.pasta(\'Todos\')">Fechar</button></div>
+        ${cache.fotos.length ? `<div class="galeria">${cache.fotos.map(f => `<div class="ft" data-id="${f.id}" onclick="App.verFoto('${f.id}')"><img alt=""><span>${esc(ref(f))} · ${fmtData(f.dataHora)}</span></div>`).join('')}</div>` : '<p class="mudo">As fotos tiradas nos registros aparecem aqui.</p>'}</div>`;
     }
+    const pastaImp = pastaArq === 'Fotos de campo' ? 'Todos' : pastaArq;
+    const lista = arqs.filter(a => pastaImp === 'Todos' || a.pasta === pastaImp).sort((a, b) => (b.atualizadoEm || 0) - (a.atualizadoEm || 0));
     $('#v-arquivos').innerHTML = `<div class="conteudo">
-      <div class="cab"><h2>Arquivos do projeto</h2><button class="btn primario" onclick="App.escolherArquivos('${pastaArq}')">+ Enviar arquivos</button></div>
+      <div class="cab"><h2>Arquivos do projeto</h2><button class="btn primario" onclick="App.exportarQGIS()">⇩ Exportar projeto para QGIS</button></div>
+
+      <h3 style="margin-top:4px">📱 Registrado no app</h3>
       <div class="pastas">
-        <div class="pasta ${pastaArq === 'Todos' ? 'ativa' : ''}" onclick="App.pasta('Todos')"><span class="ic">🗂</span><b>Todos</b><small>${arqs.length} arquivo(s)</small></div>
-        ${PASTAS.map(p => `<div class="pasta ${pastaArq === p.id ? 'ativa' : ''}" onclick="App.pasta('${p.id}')"><span class="ic">${p.ic}</span><b>${p.id}</b><small>${cont(p.id)} · ${p.desc}</small></div>`).join('')}
-      </div>${conteudo}</div>`;
+        ${card('<span style="color:#e6194b">●</span>', 'Pontos', nTipo('Point'), 'feição(ões)', "App.verTipo('Point')")}
+        ${card('<span style="color:#4363d8">⟋</span>', 'Linhas', nTipo('LineString'), 'feição(ões)', "App.verTipo('LineString')")}
+        ${card('<span style="color:#3cb44b">⬠</span>', 'Polígonos', nTipo('Polygon'), 'feição(ões)', "App.verTipo('Polygon')")}
+        ${card('📷', 'Fotos de campo', cache.fotos.length, 'foto(s)', "App.pasta('Fotos de campo')")}
+        ${card('✎', 'Caderneta', cache.caderneta.length, 'anotação(ões)', "App.ir('caderneta')")}
+      </div>
+      ${fotosHtml}
+
+      <h3>📥 Importados de fora (QGIS, Google Earth, documentos…)</h3>
+      <div class="pastas">
+        <div class="pasta ${pastaImp === 'Todos' ? 'ativa' : ''}" onclick="App.pasta('Todos')"><span class="ic">🗂</span><b>Todos</b><small>${arqs.length} arquivo(s)</small></div>
+        ${PASTAS.map(p => `<div class="pasta ${pastaImp === p.id ? 'ativa' : ''}" onclick="App.pasta('${p.id}')"><span class="ic">${p.ic}</span><b>${p.id}</b><small>${cont(p.id)} · ${p.desc}</small></div>`).join('')}
+      </div>
+      <div class="soltar" id="zona-soltar" onclick="App.escolherArquivos('${pastaImp}')">
+        <b>Arraste arquivos aqui</b> ou toque para selecionar<br>
+        <small>Projeto do QGIS compactado (.zip com shapefiles, GeoPackage, GeoTIFF, KML…), .gpkg, .kml/.kmz, .geojson, .gpx, .csv, .tif, PDF, planilhas…</small></div>
+      <label class="chk" style="margin-top:-6px"><input type="checkbox" id="arq-compart" ${compart ? 'checked' : ''} onchange="localStorage.setItem('gc_compartilhar',this.checked?'1':'0')"> Enviar para o servidor e compartilhar com a equipe do projeto</label>
+      ${lista.length ? `<div style="overflow-x:auto"><table class="tabela"><thead><tr><th>Arquivo</th><th>Pasta</th><th>Tamanho</th><th>Enviado</th><th></th></tr></thead><tbody>
+        ${lista.map(a => `<tr><td><b>${esc(a.nome)}</b><br>${a.local ? '<span class="tag local">só neste aparelho</span>' : a.driveId ? '<span class="tag ok">no servidor</span>' : '<span class="tag pend">aguardando envio</span>'}
+            ${a.pacoteNome ? `<span class="tag">do pacote ${esc(a.pacoteNome)}</span>` : ''}</td>
+          <td><select style="margin:0;padding:4px" onchange="App.moverArquivo('${a.id}',this.value)">${PASTAS.map(p => `<option ${p.id === a.pasta ? 'selected' : ''}>${p.id}</option>`).join('')}</select></td>
+          <td>${a.tamanho ? fmtTam(a.tamanho) : ''}</td><td><small>${esc(a.autorNome || a.autor || '')}<br>${fmtData(a.criadoEm)}</small></td>
+          <td><div class="linha-btns">${Mapa.ehCamada(a.nome) && a.pasta !== 'Projetos QGIS' ? `<button class="btn peq primario" onclick="App.arquivoNoMapa('${a.id}')">Mapa</button>` : ''}
+            <button class="btn peq" onclick="App.baixarArquivo('${a.id}')">Baixar</button>
+            <button class="btn peq perigo" onclick="App.excluirArquivo('${a.id}')">✕</button></div></td></tr>`).join('')}
+        </tbody></table></div>` : '<div class="vazio">Nenhum arquivo importado nesta pasta.</div>'}
+    </div>`;
     document.querySelectorAll('#v-arquivos .ft[data-id]').forEach(d => { const f = cache.fotos.find(x => x.id === d.dataset.id); carregarMini(d.querySelector('img'), f); });
     const z = $('#zona-soltar');
     if (z) {
       z.ondragover = e => { e.preventDefault(); z.classList.add('sobre'); };
       z.ondragleave = () => z.classList.remove('sobre');
-      z.ondrop = e => { e.preventDefault(); z.classList.remove('sobre'); receberArquivos([...e.dataTransfer.files], pastaArq, false); };
+      z.ondrop = e => { e.preventDefault(); z.classList.remove('sobre'); receberArquivos([...e.dataTransfer.files], pastaImp, false); };
     }
   }
   function pasta(p) { pastaArq = p; renderArquivos(); }
+  function verTipo(t) { filtroFeicoes = { tipo: t, cat: '', q: '' }; ir('feicoes'); }
+
+  async function exportarQGIS() {
+    if (!projeto) return;
+    try {
+      toast('Preparando exportação…');
+      const r = await GIS.exportarProjeto({
+        projeto, feicoes: cache.feicoes, fotos: cache.fotos, caderneta: cache.caderneta,
+        arquivos: cache.arquivos.filter(a => Mapa.ehCamada(a.nome) && a.pasta !== 'Projetos QGIS'),
+        obterBlob: rec => API.obterBlob(rec).catch(() => null), progresso: t => toast(t)
+      });
+      baixar(r.nome, r.blob);
+      toast('Projeto exportado: abra o arquivo .qgs no QGIS.');
+    } catch (e) { toast('Erro na exportação: ' + e.message, true); console.error(e); }
+  }
 
   let destinoArq = null;
   function escolherArquivos(pastaDestino, paraMapa) {
     destinoArq = { pasta: pastaDestino, paraMapa };
     const inp = $('#in-arquivo');
-    inp.accept = paraMapa ? '.zip,.kml,.kmz,.geojson,.json,.gpx,.csv,.tif,.tiff' : '';
+    inp.accept = paraMapa ? '.zip,.gpkg,.kml,.kmz,.geojson,.json,.gpx,.csv,.tif,.tiff' : '';
     inp.click();
+  }
+
+  async function registrarArquivo(blob, nome, pasta, extra = {}) {
+    const compart = localStorage.getItem('gc_compartilhar') !== '0';
+    const grande = blob.size > 35 * 1048576;
+    if (grande && compart) toast(`${nome} tem mais de 35 MB: ficará só neste aparelho. Para compartilhar, reduza o arquivo.`, true);
+    const a = Object.assign({
+      id: uid('arq'), projetoId: projeto.id, nome, mime: blob.type, tamanho: blob.size, pasta, origem: 'importado',
+      local: !compart || grande, autor: usuario.email, autorNome: usuario.nome, criadoEm: new Date().toISOString(), atualizadoEm: Date.now(), _sujo: 1
+    }, extra);
+    await DB.put('blobs', { id: a.id, blob });
+    await DB.put('arquivos', a);
+    return a;
   }
 
   async function receberArquivos(files, pastaDestino, paraMapa) {
     if (!files.length || !projeto) return;
-    const compart = localStorage.getItem('gc_compartilhar') !== '0';
-    const shpSolto = files.some(f => /\.shp$/i.test(f.name));
-    if (shpSolto) toast('Para shapefile, compacte .shp, .shx, .dbf e .prj em um único .zip.', true);
-    for (const file of files.filter(f => !/\.(shp|shx|dbf|prj|cpg)$/i.test(f.name))) {
-      const grande = file.size > 35 * 1048576;
-      const a = {
-        id: uid('arq'), projetoId: projeto.id, nome: file.name, mime: file.type, tamanho: file.size,
-        pasta: (!pastaDestino || pastaDestino === 'Todos' || pastaDestino === 'Fotos de campo' || (paraMapa && pastaDestino === 'Vetores')) ? pastaPorExt(file.name) : pastaDestino,
-        local: !compart || grande, autor: usuario.email, autorNome: usuario.nome, criadoEm: new Date().toISOString(), atualizadoEm: Date.now(), _sujo: 1
-      };
-      if (grande && compart) toast(`${file.name} tem mais de 35 MB: ficará só neste aparelho. Para compartilhar, reduza o arquivo (ex.: GeoTIFF com compressão JPEG).`, true);
-      if (Mapa.ehCamada(file.name)) {
-        try {
-          if (!/\.tiff?$/i.test(file.name)) await Mapa.lerVetor(file, file.name); // valida antes de guardar
-        } catch (e) { toast(`${file.name}: ${e.message}`, true); continue; }
-        a.visivel = !!paraMapa;
-      }
-      await DB.put('blobs', { id: a.id, blob: file });
-      await DB.put('arquivos', a);
-      if (paraMapa && Mapa.ehCamada(file.name)) {
-        try { await Mapa.mostrarCamada(a); Mapa.zoomCamada(a.id); } catch (e) { toast(e.message, true); }
-      }
+    if (files.some(f => /\.shp$/i.test(f.name))) toast('Shapefile solto: compacte .shp, .shx, .dbf e .prj (ou a pasta inteira do projeto) em um .zip.', true);
+    const mostrar = [];
+    let n = 0;
+    for (const file of files.filter(f => !/\.(shp|shx|dbf|prj|cpg|qmd|sbn|sbx)$/i.test(f.name))) {
+      const e = Mapa.extensao(file.name);
+      try {
+        if (e === 'zip' || e === 'gpkg') {
+          let itens = null;
+          if (e === 'zip') {
+            toast('Analisando ' + file.name + '…');
+            const info = await GIS.analisarZip(file);
+            if (info.pacote) itens = await GIS.importarPacote(info, t => toast(t));
+          } else itens = await GIS.gpkgParaCamadas(file);
+          if (itens) {
+            const pac = await registrarArquivo(file, file.name, 'Projetos QGIS', { pacote: true });
+            for (const it of itens) {
+              const a = await registrarArquivo(it.blob, it.nome, it.pasta, { pacoteId: pac.id, pacoteNome: file.name, visivel: it.camada });
+              if (it.camada) mostrar.push(a);
+            }
+            toast(`${file.name}: ${itens.length} camada(s) importada(s).`);
+            n++; continue;
+          }
+        }
+        if (Mapa.ehCamada(file.name) && !/\.tiff?$/i.test(file.name)) await Mapa.lerVetor(file, file.name); // valida
+        const pasta = (!pastaDestino || ['Todos', 'Fotos de campo', 'Projetos QGIS'].includes(pastaDestino) || (paraMapa && pastaDestino === 'Vetores')) ? pastaPorExt(file.name) : pastaDestino;
+        const a = await registrarArquivo(file, file.name, pasta, { visivel: Mapa.ehCamada(file.name) && !!paraMapa });
+        if (paraMapa && Mapa.ehCamada(file.name)) mostrar.push(a);
+        n++;
+      } catch (err) { toast(`${file.name}: ${err.message}`, true); console.error(err); }
     }
     await recarregarCache();
-    toast(files.length + ' arquivo(s) adicionado(s).');
+    if (mostrar.length) {
+      Mapa.iniciar();
+      for (const a of mostrar) { try { await Mapa.mostrarCamada(a); } catch (err) { toast(`${a.nome}: ${err.message}`, true); } }
+      Mapa.enquadrarProjeto();
+    }
+    if (n) toast(n + ' arquivo(s) importado(s).' + (mostrar.length ? ' Camadas adicionadas ao mapa.' : ''));
     if (vista === 'arquivos') renderArquivos();
     if (paraMapa && !$('#modal').hidden) Mapa.painelCamadas();
     agendarSync();
@@ -840,11 +963,14 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
   }
 
   async function excluirArquivo(id) {
-    if (!confirm('Excluir este arquivo do projeto?')) return;
-    const a = await DB.get('arquivos', id);
-    Mapa.ocultarCamada(id);
-    a.excluido = true; a.atualizadoEm = Date.now(); a._sujo = a.local ? 0 : 1;
-    await DB.put('arquivos', a); await DB.del('blobs', id);
+    const a0 = await DB.get('arquivos', id);
+    const filhos = a0.pacote ? cache.arquivos.filter(x => x.pacoteId === id) : [];
+    if (!confirm(filhos.length ? `Excluir o pacote e as ${filhos.length} camada(s) extraídas dele?` : 'Excluir este arquivo do projeto?')) return;
+    for (const a of [a0, ...filhos]) {
+      Mapa.ocultarCamada(a.id);
+      a.excluido = true; a.atualizadoEm = Date.now(); a._sujo = a.local ? 0 : 1;
+      await DB.put('arquivos', a); await DB.del('blobs', a.id);
+    }
     await recarregarCache(); renderArquivos(); agendarSync();
   }
 
@@ -1001,8 +1127,8 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
   return {
     esc, toast, modal, fecharModal, corDe, projetoAtual, ir, renderProjetos, abrirProjeto, editarProjeto, salvarProjeto, excluirProjeto,
     novaFeicao, abrirFeicao, salvarFeicao, excluirFeicao, editarGeom, verNoMapa, addAttr, filtrar, exportar, baixarExport,
-    adicionarFotos, verFoto, excluirFoto, ia, aplicarIA, renderCaderneta, abrirCaderneta, salvarCaderneta, excluirCaderneta, relatorio,
-    pasta, escolherArquivos, baixarArquivo, baixarFotos, arquivoNoMapa, moverArquivo, excluirArquivo, arquivosDoProjeto,
+    adicionarFotos, verFoto, excluirFoto, ia, ditar, aplicarIA, renderCaderneta, abrirCaderneta, salvarCaderneta, excluirCaderneta, relatorio,
+    pasta, verTipo, exportarQGIS, escolherArquivos, baixarArquivo, baixarFotos, arquivoNoMapa, moverArquivo, excluirArquivo, arquivosDoProjeto,
     alterarSenha, salvarIALocal, salvarIAServidor, carregarUsuarios, admUsuario, admSenha, limparLocal, instalar, sair,
     sincronizarTudo, redesenharMapa
   };

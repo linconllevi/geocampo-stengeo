@@ -297,7 +297,7 @@ const Mapa = (() => {
   }
 
   async function painelCamadas() {
-    const arqs = (await App.arquivosDoProjeto()).filter(a => !a.excluido && ehCamada(a.nome));
+    const arqs = (await App.arquivosDoProjeto()).filter(a => !a.excluido && !a.pacote && ehCamada(a.nome));
     const base = localStorage.getItem('gc_base') || 'google_sat';
     App.modal(`
       <div class="modal-cab"><h2>Camadas</h2><button class="fechar" onclick="App.fecharModal()">✕</button></div>
@@ -317,7 +317,7 @@ const Mapa = (() => {
             ? `<input type="range" min="0.1" max="1" step="0.1" value="${(a.estilo && a.estilo.opacidade) ?? 1}" onchange="Mapa.mudarEstilo('${a.id}',{opacidade:+this.value})" title="Opacidade">`
             : `<input type="color" value="${(a.estilo && a.estilo.cor) || '#ffcc00'}" onchange="Mapa.mudarEstilo('${a.id}',{cor:this.value})" title="Cor">`}
           <button class="btn peq" onclick="Mapa.zoomCamada('${a.id}')">⌖</button>
-        </div>`).join('') : '<p class="mudo">Nenhuma camada. Importe shapefile (.zip), KML/KMZ, GeoJSON, GPX, CSV ou GeoTIFF.</p>'}
+        </div>`).join('') : '<p class="mudo">Nenhuma camada. Importe um projeto do QGIS compactado (.zip), GeoPackage, shapefile, KML/KMZ, GeoJSON, GPX, CSV ou GeoTIFF.</p>'}
       <div class="linha-btns" style="margin-top:14px">
         <button class="btn primario" onclick="App.escolherArquivos('Vetores', true)">+ Importar camada</button>
         <button class="btn" onclick="Mapa.enquadrarProjeto();App.fecharModal()">Enquadrar projeto</button>
@@ -382,7 +382,7 @@ const Mapa = (() => {
   return {
     iniciar, ajustar, trocarBase, desenharFeicoes, focar, enquadrarProjeto, desenhar, editarGeometria,
     alternarGPS, pontoGPS, alternarTrilha, obterPosicao, painelCamadas, alternarCamada, mudarEstilo, zoomCamada,
-    visTipo, rotulos, baixarOffline, mostrarCamada, ocultarCamada, limparCamadas, restaurarCamadas, ehCamada, lerVetor, extensao,
+    visTipo, rotulos, baixarOffline, carregarScript, mostrarCamada, ocultarCamada, limparCamadas, restaurarCamadas, ehCamada, lerVetor, extensao,
     posicaoAtual: () => ultimaPos
   };
 })();

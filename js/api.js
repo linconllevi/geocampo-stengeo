@@ -142,24 +142,25 @@ Regras:
     melhorar: 'Reescreva o texto abaixo melhorando a redação técnica, mantendo o mesmo conteúdo e aproximadamente o mesmo tamanho.',
     tecnico: 'Reescreva o texto abaixo como uma descrição técnica formal de relatório, organizada em parágrafos.',
     topicos: 'Organize o texto abaixo em tópicos curtos (use "- " no início de cada linha), agrupando por assunto (ex.: localização, descrição, observações, recomendações) somente quando houver informação para isso.',
-    resumir: 'Resuma o texto abaixo em até 3 frases objetivas.'
+    resumir: 'Resuma o texto abaixo em até 3 frases objetivas.',
+    audio: 'O áudio anexo é uma anotação falada em campo. Transcreva-o em português e entregue o texto já corrigido e organizado como descrição técnica de campo: remova hesitações, repetições e vícios de fala ("é...", "tipo", "né"), corrija termos técnicos mal pronunciados quando o contexto deixar claro, mantenha todos os números, medidas e nomes ditos e não acrescente nada que não foi falado. Se houver texto já escrito abaixo, considere-o apenas como contexto e NÃO o repita.'
   };
 
-  async function ia(texto, modo = 'melhorar', contexto = '') {
-    const prompt = `${MODOS[modo] || MODOS.melhorar}\n${contexto ? 'Contexto do registro: ' + contexto + '\n' : ''}\nTexto original:\n"""${texto}"""`;
+  async function ia(texto, modo = 'melhorar', contexto = '', audio = null) {
+    const prompt = `${MODOS[modo] || MODOS.melhorar}\n${contexto ? 'Contexto do registro: ' + contexto + '\n' : ''}\n${modo === 'audio' ? 'Texto já escrito (somente contexto)' : 'Texto original'}:\n"""${texto}"""`;
     const chaveLocal = localStorage.getItem('gc_gemini_key');
     if (chaveLocal) {
       const modelo = localStorage.getItem('gc_gemini_modelo') || 'gemini-3.8-flash';
       if (!navigator.onLine) throw new Error('A IA precisa de internet.');
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chaveLocal },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: SISTEMA }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }] })
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: SISTEMA }] }, contents: [{ role: 'user', parts: [{ text: prompt }].concat(audio ? [{ inline_data: { mime_type: audio.mime, data: audio.base64 } }] : []) }] })
       });
       const j = await r.json();
       if (!r.ok) throw new Error('IA: ' + ((j.error && j.error.message) || r.status));
       return ((j.candidates?.[0]?.content?.parts) || []).map(p => p.text || '').join('').trim();
     }
-    const r = await chamar('ia', { sistema: SISTEMA, texto: prompt });
+    const r = await chamar('ia', Object.assign({ sistema: SISTEMA, texto: prompt }, audio ? { audio } : {}));
     return r.texto;
   }
 

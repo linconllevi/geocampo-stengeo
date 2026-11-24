@@ -18,7 +18,7 @@
  *  6. Copie a URL /exec e coloque em config.js do app.
  */
 
-var VERSAO = '1.0.1';
+var VERSAO = '1.1.0';
 var PASTA_RAIZ_NOME = 'GeoCampo StenGEO';
 var TOKEN_DIAS = 30;
 
@@ -454,6 +454,7 @@ function ia_(req, u) {
     systemInstruction: { parts: [{ text: String(req.sistema || '') }] },
     contents: [{ role: 'user', parts: [{ text: String(req.texto || '') }] }]
   };
+  if (req.audio && req.audio.base64) corpo.contents[0].parts.push({ inline_data: { mime_type: req.audio.mime || 'audio/wav', data: req.audio.base64 } });
   var resp = UrlFetchApp.fetch(url, {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     headers: { 'x-goog-api-key': chave }, payload: JSON.stringify(corpo)
