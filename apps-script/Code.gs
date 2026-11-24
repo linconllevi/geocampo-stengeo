@@ -18,7 +18,7 @@
  *  6. Copie a URL /exec e coloque em config.js do app.
  */
 
-var VERSAO = '1.0.0';
+var VERSAO = '1.0.1';
 var PASTA_RAIZ_NOME = 'GeoCampo StenGEO';
 var TOKEN_DIAS = 30;
 
@@ -343,9 +343,11 @@ function pastaProjeto_(p, sub) {
   var pasta = null;
   if (p.pastaId) { try { pasta = DriveApp.getFolderById(p.pastaId); } catch (e) {} }
   if (!pasta) {
-    pasta = pastaRaiz_().createFolder(p.nome + ' [' + p.id + ']');
+    pasta = pastaRaiz_().createFolder(String(p.nome));
     p.pastaId = pasta.getId();
     gravarLinha_(ABA_PROJETOS, p, p._linha);
+  } else if (pasta.getName() !== String(p.nome)) {
+    pasta.setName(String(p.nome)); // acompanha o nome do projeto (inclusive ao renomear)
   }
   if (!sub) return pasta;
   var it = pasta.getFoldersByName(sub);
@@ -460,4 +462,12 @@ function ia_(req, u) {
   if (resp.getResponseCode() !== 200) throw new Error('IA: ' + ((j.error && j.error.message) || resp.getResponseCode()));
   var partes = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
   return { texto: partes.map(function (x) { return x.text || ''; }).join('').trim() };
+}
+
+/** Executar manualmente: renomeia as pastas de projetos já existentes para o nome do projeto. */
+function corrigirNomesPastas() {
+  lerTabela_(ABA_PROJETOS).forEach(function (p) {
+    if (!p.pastaId) return;
+    try { var f = DriveApp.getFolderById(p.pastaId); if (f.getName() !== String(p.nome)) f.setName(String(p.nome)); } catch (e) {}
+  });
 }

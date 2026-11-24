@@ -461,7 +461,14 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
     agendarSync();
   }
 
-  function comprimirFoto(file, rec, pos) {
+  let logoCarimbo = null;
+  function carregarLogo() {
+    if (!logoCarimbo) logoCarimbo = new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = 'img/logo.png'; });
+    return logoCarimbo;
+  }
+
+  async function comprimirFoto(file, rec, pos) {
+    const logo = localStorage.getItem('gc_carimbo') !== '0' ? await carregarLogo() : null;
     return new Promise((res, rej) => {
       const img = new Image();
       img.onload = () => {
@@ -471,18 +478,32 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
         const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
         const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0, w, h);
         if (localStorage.getItem('gc_carimbo') !== '0') {
-          const fs = Math.max(14, Math.round(w / 55));
+          const base = Math.min(w, h);
+          const fs = Math.max(14, Math.round(base / 34));
+          const agora = new Date();
           const linhas = [
-            `${C.EMPRESA} · ${projeto.nome}${rec.codigo ? ' · ' + rec.codigo : ''}`,
-            `${new Date().toLocaleString('pt-BR')}${pos ? ' · ' + Geo.fmtCoordTxt(pos.lat, pos.lon) + ' · ±' + Math.round(pos.precisao) + ' m' : ''}`
-          ];
-          const hBar = fs * 1.35 * linhas.length + fs * 0.8;
-          cx.fillStyle = 'rgba(8,58,115,.78)'; cx.fillRect(0, h - hBar, w, hBar);
-          cx.fillStyle = '#fff'; cx.font = `600 ${fs}px system-ui, sans-serif`; cx.textBaseline = 'top';
-          linhas.forEach((l, i) => cx.fillText(l, fs * 0.6, h - hBar + fs * 0.4 + i * fs * 1.35, w - fs * 1.2));
+            agora.toLocaleDateString('pt-BR') + ', ' + agora.toTimeString().slice(0, 5),
+            pos ? Geo.fmtDMS(pos.lat, pos.lon) : 'Coordenadas indisponíveis',
+            pos && pos.altitude != null ? 'Altitude: ' + Number(pos.altitude).toFixed(1) + ' m' : null,
+            projeto.municipio || null,
+            [rec.codigo, rec.titulo || rec.categoria || rec.atividade].filter(Boolean).join(' - ') || projeto.nome
+          ].filter(Boolean);
+          // textos no canto inferior esquerdo (branco com sombra, sem tarja)
+          cx.font = `500 ${fs}px "Segoe UI", Roboto, Arial, sans-serif`;
+          cx.textBaseline = 'alphabetic'; cx.fillStyle = '#fff';
+          cx.shadowColor = 'rgba(0,0,0,.85)'; cx.shadowBlur = fs * 0.35; cx.shadowOffsetX = 1; cx.shadowOffsetY = 1;
+          const lh = fs * 1.32, x0 = fs * 1.1, yUlt = h - fs * 0.9;
+          linhas.forEach((l, i) => cx.fillText(l, x0, yUlt - (linhas.length - 1 - i) * lh, w * 0.62));
+          // logo no canto inferior direito
+          if (logo) {
+            const lw = Math.round(Math.max(w, h) * 0.18), lhh = Math.round(lw * logo.naturalHeight / logo.naturalWidth);
+            cx.shadowColor = 'rgba(255,255,255,.9)'; cx.shadowBlur = fs * 0.5; cx.shadowOffsetX = 0; cx.shadowOffsetY = 0;
+            cx.drawImage(logo, w - lw - fs * 0.9, h - lhh - fs * 0.6, lw, lhh);
+          }
+          cx.shadowColor = 'transparent';
         }
         URL.revokeObjectURL(img.src);
-        cv.toBlob(b => b ? res(b) : rej(new Error('falha ao gerar JPEG')), 'image/jpeg', 0.82);
+        cv.toBlob(b => b ? res(b) : rej(new Error('falha ao gerar JPEG')), 'image/jpeg', 0.85);
       };
       img.onerror = () => rej(new Error('imagem inválida'));
       img.src = URL.createObjectURL(file);

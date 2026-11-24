@@ -56,5 +56,12 @@ const Geo = (() => {
     return `${lat.toFixed(6)}, ${lon.toFixed(6)} | UTM ${u.zona} E ${u.e.toFixed(1)} N ${u.n.toFixed(1)}`;
   }
 
-  return { paraUTM, medidas, fmtDist, fmtArea, fmtCoord, fmtCoordTxt, dist, n };
+  function dms(v, pos, neg) {
+    const a = Math.abs(v); let g = Math.floor(a), m = Math.floor((a - g) * 60), sec = ((a - g) * 60 - m) * 60;
+    if (sec >= 59.995) { sec = 0; m++; } if (m >= 60) { m = 0; g++; }
+    return `${g}° ${String(m).padStart(2, '0')}' ${sec.toFixed(2).padStart(5, '0')}" ${v < 0 ? neg : pos}`;
+  }
+  const fmtDMS = (lat, lon) => `${dms(lat, 'N', 'S')}  ${dms(lon, 'L', 'O')}`;
+
+  return { fmtDMS, paraUTM, medidas, fmtDist, fmtArea, fmtCoord, fmtCoordTxt, dist, n };
 })();
