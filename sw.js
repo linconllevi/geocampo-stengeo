@@ -1,5 +1,5 @@
 /* Service worker: app offline + cache dos blocos do mapa */
-const VERSAO = 'geocampo-v1.2.0';
+const VERSAO = 'geocampo-v1.2.1';
 const SHELL = [
   './', 'index.html', 'config.js', 'manifest.webmanifest', 'css/app.css',
   'js/db.js', 'js/geo.js', 'js/api.js', 'js/mapa.js', 'js/gis.js', 'js/app.js',
@@ -7,7 +7,7 @@ const SHELL = [
   'lib/togeojson.umd.js', 'lib/jszip.min.js', 'lib/shp.min.js', 'lib/sql-wasm.js', 'lib/sql-wasm.wasm',
   'lib/georaster.browser.bundle.min.js', 'lib/georaster-layer-for-leaflet.min.js',
   'lib/images/marker-icon.png', 'lib/images/marker-icon-2x.png', 'lib/images/marker-shadow.png', 'lib/images/layers.png',
-  'img/logo.png', 'img/geocampo-logo.png', 'img/icone.svg', 'img/icon-192.png', 'img/icon-512.png'
+  'img/logo.png', 'img/geocampo-logo.png', 'img/icone.svg', 'img/gc-icon-192.png', 'img/gc-icon-512.png', 'img/gc-maskable-192.png', 'img/gc-maskable-512.png', 'img/apple-touch-icon.png'
 ];
 const TILES = /(mt\d?\.google\.com\/vt|arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery|tile\.openstreetmap\.org)/;
 
