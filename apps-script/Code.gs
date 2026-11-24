@@ -18,7 +18,7 @@
  *  6. Copie a URL /exec e coloque em config.js do app.
  */
 
-var VERSAO = '1.1.0';
+var VERSAO = '1.2.0';
 var PASTA_RAIZ_NOME = 'GeoCampo StenGEO';
 var TOKEN_DIAS = 30;
 
@@ -53,6 +53,7 @@ function doPost(e) {
     var privadas = {
       eu: function () { return { usuario: publico_(usuario) }; },
       listarProjetos: listarProjetos_,
+      equipeProjeto: equipeProjeto_,
       salvarProjeto: salvarProjeto_,
       excluirProjeto: excluirProjeto_,
       sincronizar: sincronizar_,
@@ -304,6 +305,19 @@ function obterProjeto_(id, u) {
   if (!p) throw new Error('Projeto não encontrado (sincronize o projeto primeiro).');
   if (!podeVer_(p, u)) throw new Error('Sem acesso a este projeto.');
   return p;
+}
+
+function equipeProjeto_(req, u) {
+  var p = obterProjeto_(req.id, u);
+  var emails = [String(p.criadoPor).toLowerCase()].concat(membrosDe_(p));
+  var usuarios = lerTabela_(ABA_USUARIOS);
+  var vistos = {};
+  var equipe = emails.filter(function (e) { if (!e || vistos[e]) return false; vistos[e] = 1; return true; }).map(function (e) {
+    var x = usuarios.filter(function (k) { return k.email === e; })[0];
+    return x ? { email: e, nome: x.nome, funcao: x.funcao, status: x.status, perfil: x.perfil, ultimoAcesso: x.ultimoAcesso, criador: e === String(p.criadoPor).toLowerCase() }
+             : { email: e, nome: '', status: 'nao_cadastrado', criador: false };
+  });
+  return { equipe: equipe };
 }
 
 function salvarProjeto_(req, u) {

@@ -251,20 +251,33 @@ const Mapa = (() => {
       await carregarScript('lib/georaster.browser.bundle.min.js');
       await carregarScript('lib/georaster-layer-for-leaflet.min.js');
       const gr = await parseGeoraster(await blob.arrayBuffer());
-      layer = new GeoRasterLayer({ georaster: gr, opacity: est.opacidade ?? 1, resolution: 256 });
+      const nb = gr.numberOfRasters, nd = gr.noDataValue;
+      const mins = gr.mins || [], maxs = gr.maxs || [];
+      const estica = (v, i) => { const mn = mins[i] ?? 0, mx = maxs[i] ?? 255; if (mx <= 255 && mn >= 0) return v; return Math.round(Math.max(0, Math.min(1, (v - mn) / ((mx - mn) || 1))) * 255); };
+      layer = new GeoRasterLayer({
+        georaster: gr, opacity: est.opacidade ?? 1, resolution: 256,
+        pixelValuesToColorFn: vals => {
+          if (vals.every(v => v === nd || v === null || Number.isNaN(v))) return null;
+          if (nb >= 4 && vals[3] === 0) return null;
+          if (nb >= 3) { const r = estica(vals[0], 0), g = estica(vals[1], 1), b = estica(vals[2], 2); if (r === 0 && g === 0 && b === 0 && nd == null) return null; return `rgb(${r},${g},${b})`; }
+          const mn = mins[0] ?? 0, mx = maxs[0] ?? 255, t = Math.max(0, Math.min(1, (vals[0] - mn) / ((mx - mn) || 1)));
+          const c = Math.round(t * 255); return `rgb(${c},${c},${c})`;
+        }
+      });
     } else {
       const gj = await lerVetor(blob, rec.nome);
-      const cor = est.cor || '#ffcc00';
+      const e2 = estiloDe(rec);
+      const opac = e2.opacidade ?? 1;
       layer = L.geoJSON(gj, {
         pmIgnore: true,
-        style: () => ({ color: cor, weight: 2, fillColor: cor, fillOpacity: est.preenchimento ?? 0.15 }),
-        pointToLayer: (_, ll) => L.circleMarker(ll, { radius: 6, color: '#000', weight: 1, fillColor: cor, fillOpacity: .95 }),
-        onEachFeature: (ft, l) => l.bindPopup(`<div class="pop"><b>${esc(rec.nome)}</b><br>${popupProps(ft.properties)}</div>`)
+        style: () => ({ color: e2.cor, weight: e2.espessura ?? 2, opacity: opac, fillColor: e2.preenchimento || e2.cor, fillOpacity: (e2.opacidadePreenchimento ?? 0.1) * opac }),
+        pointToLayer: (_, ll) => L.circleMarker(ll, { radius: e2.raio ?? 4, color: e2.cor === (e2.preenchimento || e2.cor) ? '#ffffff' : e2.cor, weight: 1, opacity: opac, fillColor: e2.preenchimento || e2.cor, fillOpacity: 0.95 * opac }),
+        onEachFeature: (ft, l) => l.bindPopup(`<div class="pop"><b>${esc(nomeCam(rec))}</b><br><small>${esc(grupoDe(rec))}</small><br>${popupProps(ft.properties)}</div>`)
       });
     }
     layer.addTo(map);
-    grupoFeicoes.bringToFront && grupoFeicoes.bringToFront();
-    camadasImportadas.set(rec.id, { layer, rec });
+    camadasImportadas.set(rec.id, { layer, rec, raster: EXT_RASTER.includes(ext) });
+    reordenar();
     return layer;
   }
 
@@ -276,9 +289,9 @@ const Mapa = (() => {
   function limparCamadas() { [...camadasImportadas.keys()].forEach(ocultarCamada); }
 
   async function restaurarCamadas(arquivos) {
-    for (const a of arquivos.filter(a => a.visivel && !a.excluido && ehCamada(a.nome))) {
-      try { await mostrarCamada(a); } catch (e) { console.warn(e); }
-    }
+    const lista = arquivos.filter(a => a.visivel && !a.excluido && !a.pacote && ehCamada(a.nome)).sort((a, b) => (b.ordem ?? 999) - (a.ordem ?? 999));
+    for (const a of lista) { try { await mostrarCamada(a); } catch (e) { console.warn(e); } }
+    reordenar();
   }
 
   function zoomCamada(id) {
@@ -293,42 +306,95 @@ const Mapa = (() => {
     if (c.layer.setOpacity && est.opacidade !== undefined) c.layer.setOpacity(est.opacidade);
     if (c.layer.setStyle && est.cor) {
       c.layer.setStyle({ color: est.cor, fillColor: est.cor });
+      c.layer.eachLayer && c.layer.eachLayer(l => l.setStyle && l instanceof L.CircleMarker && l.setStyle({ fillColor: est.cor }));
     }
   }
 
+  function linhaCamada(a) {
+    const e2 = estiloDe(a);
+    return `<div class="camada-linha">
+      <input type="checkbox" ${camadasImportadas.has(a.id) ? 'checked' : ''} onchange="Mapa.alternarCamada('${a.id}',this.checked)">
+      <span class="amostra" style="${EXT_RASTER.includes(extensao(a.nome)) ? 'background:linear-gradient(135deg,#6b8e23,#c2b280)' : `border-color:${e2.cor};background:${e2.preenchimento || e2.cor}${e2.opacidadePreenchimento === 0 ? '00' : '55'}`}"></span>
+      <span class="nome" title="${esc(a.nome)}">${esc(nomeCam(a))} ${a.local ? '<span class="tag local">local</span>' : ''}</span>
+      ${EXT_RASTER.includes(extensao(a.nome))
+        ? `<input type="range" min="0.1" max="1" step="0.1" value="${(a.estilo && a.estilo.opacidade) ?? 1}" onchange="Mapa.mudarEstilo('${a.id}',{opacidade:+this.value})" title="Opacidade">`
+        : `<input type="color" value="${e2.cor}" onchange="Mapa.mudarEstilo('${a.id}',{cor:this.value})" title="Cor">`}
+      <button class="btn peq" onclick="Mapa.zoomCamada('${a.id}')" title="Aproximar">⌖</button>
+    </div>`;
+  }
+
+  // árvore na ordem do QGIS: camadas e grupos intercalados conforme aparecem
+  function arvore(arqs) {
+    const raiz = { nome: '', itens: [], filhos: new Map() };
+    arqs.forEach(a => {
+      let no = raiz;
+      grupoDe(a).split(' / ').filter(Boolean).forEach(g => {
+        if (!no.filhos.has(g)) { const n = { nome: g, itens: [], filhos: new Map() }; no.filhos.set(g, n); no.itens.push({ grupo: n }); }
+        no = no.filhos.get(g);
+      });
+      no.itens.push({ camada: a });
+    });
+    return raiz;
+  }
+  const todasDe = n => n.itens.flatMap(i => i.camada ? [i.camada] : todasDe(i.grupo));
+  function htmlArvore(no, caminho, nivel, linha = linhaCamada, comCheck = true) {
+    return no.itens.map(it => {
+      if (it.camada) return linha(it.camada);
+      const f = it.grupo, cam = caminho ? caminho + ' / ' + f.nome : f.nome;
+      const todas = todasDe(f), lig = todas.filter(a => camadasImportadas.has(a.id)).length;
+      return `<details class="grupo-cam" ${nivel < 1 ? 'open' : ''}><summary>
+        ${comCheck ? `<input type="checkbox" ${lig === todas.length ? 'checked' : ''} ${lig && lig < todas.length ? 'data-parcial="1"' : ''} onclick="event.stopPropagation()" onchange="Mapa.alternarGrupo(${esc(JSON.stringify(cam))},this.checked)">` : ''}
+        <span class="pasta-ic">📁</span><b>${esc(f.nome)}</b> <small class="mudo">(${todas.length})</small></summary>
+        <div class="grupo-corpo">${htmlArvore(f, cam, nivel + 1, linha, comCheck)}</div></details>`;
+    }).join('');
+  }
+  const arvoreHtml = (arqs, linha, comCheck) => htmlArvore(arvore(arqs), '', 0, linha, comCheck);
+
   async function painelCamadas() {
-    const arqs = (await App.arquivosDoProjeto()).filter(a => !a.excluido && !a.pacote && ehCamada(a.nome));
+    const arqs = (await App.arquivosDoProjeto()).filter(a => !a.excluido && !a.pacote && ehCamada(a.nome))
+      .sort((a, b) => (a.ordem ?? 1e9) - (b.ordem ?? 1e9) || nomeCam(a).localeCompare(nomeCam(b)));
     const base = localStorage.getItem('gc_base') || 'google_sat';
     App.modal(`
       <div class="modal-cab"><h2>Camadas</h2><button class="fechar" onclick="App.fecharModal()">✕</button></div>
       <h3 style="margin-top:0">Mapa de fundo</h3>
       <div class="base-op">${Object.entries(BASES).map(([k, b]) => `<button class="${k === base ? 'ativo' : ''}" onclick="Mapa.trocarBase('${k}');Mapa.painelCamadas()">${b.nome}</button>`).join('')}</div>
-      <h3>Feições do projeto</h3>
-      <label class="chk"><input type="checkbox" ${visTipos.Point ? 'checked' : ''} onchange="Mapa.visTipo('Point',this.checked)"> Pontos</label>
-      <label class="chk"><input type="checkbox" ${visTipos.LineString ? 'checked' : ''} onchange="Mapa.visTipo('LineString',this.checked)"> Linhas</label>
-      <label class="chk"><input type="checkbox" ${visTipos.Polygon ? 'checked' : ''} onchange="Mapa.visTipo('Polygon',this.checked)"> Polígonos</label>
-      <label class="chk"><input type="checkbox" ${mostrarRotulos ? 'checked' : ''} onchange="Mapa.rotulos(this.checked)"> Mostrar códigos (rótulos)</label>
-      <h3>Camadas importadas (vetores e imagens)</h3>
-      ${arqs.length ? arqs.map(a => `
-        <div class="camada-linha">
-          <input type="checkbox" ${camadasImportadas.has(a.id) ? 'checked' : ''} onchange="Mapa.alternarCamada('${a.id}',this.checked)">
-          <span class="nome" title="${esc(a.nome)}">${esc(a.nome)} ${a.local ? '<span class="tag local">local</span>' : ''}</span>
-          ${EXT_RASTER.includes(extensao(a.nome))
-            ? `<input type="range" min="0.1" max="1" step="0.1" value="${(a.estilo && a.estilo.opacidade) ?? 1}" onchange="Mapa.mudarEstilo('${a.id}',{opacidade:+this.value})" title="Opacidade">`
-            : `<input type="color" value="${(a.estilo && a.estilo.cor) || '#ffcc00'}" onchange="Mapa.mudarEstilo('${a.id}',{cor:this.value})" title="Cor">`}
-          <button class="btn peq" onclick="Mapa.zoomCamada('${a.id}')">⌖</button>
-        </div>`).join('') : '<p class="mudo">Nenhuma camada. Importe um projeto do QGIS compactado (.zip), GeoPackage, shapefile, KML/KMZ, GeoJSON, GPX, CSV ou GeoTIFF.</p>'}
+      <h3>Registrado no app</h3>
+      <div class="chips">
+        <label class="chip"><input type="checkbox" ${visTipos.Point ? 'checked' : ''} onchange="Mapa.visTipo('Point',this.checked)"> Pontos</label>
+        <label class="chip"><input type="checkbox" ${visTipos.LineString ? 'checked' : ''} onchange="Mapa.visTipo('LineString',this.checked)"> Linhas</label>
+        <label class="chip"><input type="checkbox" ${visTipos.Polygon ? 'checked' : ''} onchange="Mapa.visTipo('Polygon',this.checked)"> Polígonos</label>
+        <label class="chip"><input type="checkbox" ${mostrarRotulos ? 'checked' : ''} onchange="Mapa.rotulos(this.checked)"> Rótulos</label>
+      </div>
+      <h3>Camadas importadas <small class="mudo">(${arqs.length})</small></h3>
+      ${arqs.length ? `<div class="linha-btns" style="margin-bottom:6px"><button class="btn peq" onclick="Mapa.alternarGrupo('',true)">Ligar todas</button><button class="btn peq" onclick="Mapa.alternarGrupo('',false)">Desligar todas</button></div>
+        <div class="arvore">${htmlArvore(arvore(arqs), '', 0)}</div>`
+        : '<p class="mudo">Nenhuma camada. Importe um projeto do QGIS compactado (.zip), GeoPackage, shapefile, KML/KMZ, GeoJSON, GPX, CSV ou GeoTIFF.</p>'}
       <div class="linha-btns" style="margin-top:14px">
         <button class="btn primario" onclick="App.escolherArquivos('Vetores', true)">+ Importar camada</button>
         <button class="btn" onclick="Mapa.enquadrarProjeto();App.fecharModal()">Enquadrar projeto</button>
       </div>`);
+    document.querySelectorAll('.arvore input[data-parcial]').forEach(i => i.indeterminate = true);
+  }
+
+  async function alternarGrupo(caminho, ligar) {
+    const arqs = (await App.arquivosDoProjeto()).filter(a => !a.excluido && !a.pacote && ehCamada(a.nome) && (!caminho || grupoDe(a) === caminho || grupoDe(a).startsWith(caminho + ' / ')))
+      .sort((a, b) => (b.ordem ?? 999) - (a.ordem ?? 999));
+    App.toast(ligar ? 'Carregando camadas…' : 'Desligando camadas…');
+    for (const a of arqs) {
+      try {
+        if (ligar) await mostrarCamada(a); else ocultarCamada(a.id);
+        a.visivel = !!ligar; await DB.put('arquivos', a);
+      } catch (e) { App.toast(`${nomeCam(a)}: ${e.message}`, true); }
+    }
+    reordenar();
+    if (!document.getElementById('modal').hidden) painelCamadas();
   }
 
   async function alternarCamada(id, ligar) {
     const rec = await DB.get('arquivos', id);
     if (!rec) return;
     try {
-      if (ligar) { App.toast('Carregando camada…'); await mostrarCamada(rec); zoomCamada(id); App.toast('Camada carregada.'); }
+      if (ligar) { App.toast('Carregando camada…'); await mostrarCamada(rec); App.toast('Camada carregada.'); }
       else ocultarCamada(id);
       rec.visivel = !!ligar; await DB.put('arquivos', rec); // preferência local, não sincroniza
     } catch (e) { App.toast(e.message, true); }
@@ -336,6 +402,7 @@ const Mapa = (() => {
 
   async function mudarEstilo(id, est) {
     const rec = await DB.get('arquivos', id);
+    if (est.cor) est.preenchimento = est.cor;
     rec.estilo = Object.assign({}, rec.estilo, est); rec.atualizadoEm = Date.now(); rec._sujo = rec.local ? 0 : 1;
     await DB.put('arquivos', rec);
     estilizarCamada(id, est);
@@ -377,12 +444,27 @@ const Mapa = (() => {
     App.toast(`Mapa offline pronto (${feitos - erros} blocos${erros ? ', ' + erros + ' falhas' : ''}).`);
   }
 
+  const PALETA_CAM = ['#ff7f0e', '#1f77b4', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#17becf', '#bcbd22', '#ffd92f', '#00e5ff', '#ff4081', '#7cb342', '#ab47bc', '#ffa726', '#26a69a'];
+  function corPadrao(rec) { let h = 0; const t = rec.nome + (rec.grupo || ''); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0; return PALETA_CAM[h % PALETA_CAM.length]; }
+  const estiloDe = rec => Object.assign({ cor: corPadrao(rec) }, rec.estilo || {});
+  const nomeCam = a => a.nomeCamada || a.nome.replace(/\.(zip|geojson|json|kml|kmz|gpx|csv|tiff?)$/i, '');
+  const grupoDe = a => a.grupo || (a.pacoteNome ? a.pacoteNome.replace(/\.(zip|gpkg)$/i, '') : 'Outras camadas');
+
+  function reordenar() {
+    if (!map) return;
+    const vis = [...camadasImportadas.values()].sort((a, b) => (b.rec.ordem ?? 999) - (a.rec.ordem ?? 999));
+    let z = 1;
+    vis.forEach(c => { if (c.layer.setZIndex && !c.layer.bringToFront) c.layer.setZIndex(z++); else if (c.layer.bringToFront) c.layer.bringToFront(); });
+    vis.filter(c => c.raster).forEach((c, i) => c.layer.setZIndex && c.layer.setZIndex(10 + i));
+    grupoFeicoes && grupoFeicoes.bringToFront();
+  }
+
   function esc(s) { return App.esc(s); }
 
   return {
     iniciar, ajustar, trocarBase, desenharFeicoes, focar, enquadrarProjeto, desenhar, editarGeometria,
     alternarGPS, pontoGPS, alternarTrilha, obterPosicao, painelCamadas, alternarCamada, mudarEstilo, zoomCamada,
-    visTipo, rotulos, baixarOffline, carregarScript, mostrarCamada, ocultarCamada, limparCamadas, restaurarCamadas, ehCamada, lerVetor, extensao,
+    visTipo, rotulos, baixarOffline, carregarScript, alternarGrupo, arvoreHtml, reordenar, nomeCam, grupoDe, estiloDe, mostrarCamada, ocultarCamada, limparCamadas, restaurarCamadas, ehCamada, lerVetor, extensao,
     posicaoAtual: () => ultimaPos
   };
 })();

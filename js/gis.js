@@ -120,10 +120,81 @@ const GIS = (() => {
             feats.push({ type: 'Feature', properties: props, geometry: reprojetar(g, f) });
           }
         }
-        camadas.push({ nome: `${base(nomeArq)} - ${tab}`, geojson: { type: 'FeatureCollection', features: feats } });
+        camadas.push({ nome: `${base(nomeArq)} - ${tab}`, tabela: String(tab), geojson: { type: 'FeatureCollection', features: feats } });
       }
       return camadas;
     } finally { db.close(); }
+  }
+
+  /* ---------------- Projeto QGIS (.qgs/.qgz): grupos, ordem e estilos ---------------- */
+  function corRGBA(v) {
+    const n = String(v || '').split(',').slice(0, 4).map(Number);
+    if (n.length < 3 || n.some(isNaN)) return null;
+    const hex = '#' + n.slice(0, 3).map(x => Math.max(0, Math.min(255, x)).toString(16).padStart(2, '0')).join('');
+    return { hex, a: n.length > 3 ? n[3] / 255 : 1 };
+  }
+  function propsSimbolo(el) {
+    const p = {};
+    el.querySelectorAll(':scope > prop').forEach(x => p[x.getAttribute('k')] = x.getAttribute('v'));
+    const mapa = el.querySelector(':scope > Option[type="Map"]');
+    if (mapa) mapa.querySelectorAll(':scope > Option').forEach(x => p[x.getAttribute('name')] = x.getAttribute('value'));
+    return p;
+  }
+  function estiloQgis(ml) {
+    const geom = (ml.getAttribute('geometry') || '').toLowerCase();
+    const est = {};
+    const op = ml.querySelector(':scope > layerOpacity'); if (op) est.opacidade = Number(op.textContent);
+    const simb = ml.querySelector('renderer-v2 symbol');
+    if (!simb) return est;
+    const camada = simb.querySelector(':scope > layer');
+    if (!camada) return est;
+    const p = propsSimbolo(camada);
+    const alpha = Number(simb.getAttribute('alpha') || 1);
+    const mm = v => Math.max(1, Math.min(6, (Number(v) || 0.26) * 3.78));
+    if (geom === 'line') {
+      const c = corRGBA(p.line_color || p.color); if (c) est.cor = c.hex;
+      est.espessura = mm(p.line_width);
+    } else {
+      const f = corRGBA(p.color), o = corRGBA(p.outline_color || p.line_color);
+      if (geom === 'polygon') {
+        if (o && p.outline_style !== 'no') est.cor = o.hex; else if (f) est.cor = f.hex;
+        if (f && p.style !== 'no') { est.preenchimento = f.hex; est.opacidadePreenchimento = Math.min(0.6, f.a * alpha * 0.6); } else est.opacidadePreenchimento = 0;
+        est.espessura = mm(p.outline_width);
+      } else {
+        if (f) est.preenchimento = f.hex; if (o) est.cor = o.hex; else if (f) est.cor = f.hex;
+        est.raio = Math.max(3, Math.min(9, (Number(p.size) || 2) * 2));
+        est.opacidadePreenchimento = 0.95;
+      }
+    }
+    return est;
+  }
+  function chaveFonte(ds) {
+    const ln = (String(ds).match(/layername=([^|&]+)/i) || [])[1];
+    const caminho = String(ds).split('|')[0].replace(/^\/vsizip\//, '').replace(/\\/g, '/');
+    const b = base(caminho).toLowerCase();
+    return ln ? b + '|' + decodeURIComponent(ln).toLowerCase() : b;
+  }
+  function lerProjetoQgs(xml) {
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    const maplayers = {};
+    doc.querySelectorAll('projectlayers > maplayer').forEach(ml => { const id = ml.querySelector(':scope > id'); if (id) maplayers[id.textContent] = ml; });
+    const camadas = []; let ordem = 0;
+    const percorrer = (no, grupos, ligado) => {
+      [...no.children].forEach(el => {
+        if (el.tagName === 'layer-tree-group') {
+          percorrer(el, [...grupos, el.getAttribute('name')], ligado && el.getAttribute('checked') !== 'Qt::Unchecked');
+        } else if (el.tagName === 'layer-tree-layer') {
+          const ml = maplayers[el.getAttribute('id')];
+          const ds = el.getAttribute('source') || (ml && ml.querySelector(':scope > datasource') ? ml.querySelector(':scope > datasource').textContent : '');
+          if (!ds || /type=xyz|url=http|memory\?|^http/i.test(ds)) return;
+          camadas.push({ nome: el.getAttribute('name'), grupo: grupos.join(' / '), ordem: ordem++, visivel: ligado && el.getAttribute('checked') !== 'Qt::Unchecked',
+            chave: chaveFonte(ds), estilo: ml ? estiloQgis(ml) : {} });
+        }
+      });
+    };
+    const raiz = doc.querySelector('qgis > layer-tree-group');
+    if (raiz) percorrer(raiz, [], true);
+    return camadas;
   }
 
   /* ---------------- ZIP do QGIS ---------------- */
@@ -137,10 +208,10 @@ const GIS = (() => {
     return { zip, nomes, shp, outros, qgis, pacote: !(shp.length === 1 && !outros.length && !qgis.length) };
   }
 
-  /** Extrai cada conjunto de dados do ZIP. Retorna [{ nome, blob, pasta, camada }] */
+  /** Extrai cada conjunto de dados do ZIP. Retorna [{ nome, blob, pasta, camada, grupo, nomeCamada, ordem, estilo, visivel }] */
   async function importarPacote(info, avisar = () => {}) {
     const saida = [];
-    // shapefiles: um .zip por camada (mantém a projeção pelo .prj)
+    const pastaDe = n => { const partes = n.split('/').slice(0, -1); if (partes.length && info.nomes.every(x => x.startsWith(partes[0] + '/'))) partes.shift(); return partes.join(' / '); };
     for (const s of info.shp) {
       const raiz = s.slice(0, -4);
       const z = new JSZip();
@@ -148,20 +219,48 @@ const GIS = (() => {
         const n = info.nomes.find(x => x.slice(0, -4).toLowerCase() === raiz.toLowerCase() && ext(x) === e);
         if (n) z.file(base(s) + '.' + e, await info.zip.file(n).async('uint8array'));
       }
-      saida.push({ nome: base(s) + '.zip', blob: await z.generateAsync({ type: 'blob' }), pasta: 'Vetores', camada: true });
+      saida.push({ nome: base(s) + '.zip', nomeCamada: base(s), blob: await z.generateAsync({ type: 'blob' }), pasta: 'Vetores', camada: true, chave: base(s).toLowerCase(), grupo: pastaDe(s) });
     }
     for (const n of info.outros) {
       avisar('Lendo ' + base(n) + '…');
       const e = ext(n);
       const blob = await info.zip.file(n).async('blob');
       if (e === 'gpkg') {
-        for (const c of await lerGpkg(await blob.arrayBuffer(), n)) {
+        const cams = await lerGpkg(await blob.arrayBuffer(), n);
+        for (const c of cams) {
           if (!c.geojson.features.length) continue;
-          saida.push({ nome: c.nome + '.geojson', blob: new Blob([JSON.stringify(c.geojson)], { type: 'application/geo+json' }), pasta: 'Vetores', camada: true });
+          saida.push({ nome: c.nome + '.geojson', nomeCamada: c.tabela, blob: new Blob([JSON.stringify(c.geojson)], { type: 'application/geo+json' }), pasta: 'Vetores', camada: true,
+            chave: base(n).toLowerCase() + '|' + c.tabela.toLowerCase(), chaveArq: base(n).toLowerCase(), grupo: pastaDe(n) });
         }
-      } else saida.push({ nome: n.split('/').pop(), blob, pasta: RAS.includes(e) ? 'Imagens e Raster' : 'Vetores', camada: true });
+      } else saida.push({ nome: n.split('/').pop(), nomeCamada: base(n), blob, pasta: RAS.includes(e) ? 'Imagens e Raster' : 'Vetores', camada: true, chave: base(n).toLowerCase(), grupo: pastaDe(n) });
     }
-    return saida;
+    // aplica grupos, ordem, nomes e estilos do projeto QGIS, se houver
+    let proj = [];
+    for (const q of info.qgis) {
+      try {
+        let xml;
+        if (ext(q) === 'qgz') {
+          const z2 = await JSZip.loadAsync(await info.zip.file(q).async('arraybuffer'));
+          const qn = Object.keys(z2.files).find(x => x.toLowerCase().endsWith('.qgs'));
+          if (qn) xml = await z2.file(qn).async('text');
+        } else xml = await info.zip.file(q).async('text');
+        if (xml) proj = proj.concat(lerProjetoQgs(xml));
+      } catch (err) { console.warn('Projeto QGIS não lido', err); }
+    }
+    if (proj.length) {
+      avisar('Aplicando grupos e estilos do projeto QGIS…');
+      const usados = new Set();
+      for (const it of saida) {
+        let c = proj.find(p => !usados.has(p) && p.chave === it.chave);
+        if (!c && it.chaveArq) c = proj.find(p => !usados.has(p) && p.chave === it.chaveArq && saida.filter(x => x.chaveArq === it.chaveArq).length === 1);
+        if (c) { usados.add(c); Object.assign(it, { nomeCamada: c.nome, grupo: c.grupo, ordem: c.ordem, estilo: c.estilo, visivel: c.visivel }); }
+      }
+      // camadas que não estão no projeto ficam por último
+      let extra = proj.length;
+      saida.filter(it => it.ordem === undefined).forEach(it => { it.ordem = extra++; it.grupo = it.grupo || 'Fora do projeto QGIS'; });
+    } else saida.forEach((it, i) => it.ordem = i);
+    saida.forEach(it => { if (it.visivel === undefined) it.visivel = true; });
+    return { itens: saida, temProjeto: proj.length > 0 };
   }
 
   async function gpkgParaCamadas(file) {
@@ -312,5 +411,5 @@ ${todas.map(l => `    <layer id="${l.id}"/>`).join('\n')}
     return { nome: nb + '_QGIS.zip', blob: await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }) };
   }
 
-  return { analisarZip, importarPacote, gpkgParaCamadas, lerGpkg, criarGpkg, exportarProjeto, nomeSeguro };
+  return { analisarZip, importarPacote, lerProjetoQgs, gpkgParaCamadas, lerGpkg, criarGpkg, exportarProjeto, nomeSeguro };
 })();

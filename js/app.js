@@ -101,12 +101,12 @@ const App = (() => {
     document.querySelectorAll('#nav button').forEach(b => b.onclick = () => ir(b.dataset.v));
     const pid = localStorage.getItem('gc_projeto');
     if (pid) { const p = await DB.get('projetos', pid); if (p && !p.excluido) await abrirProjeto(pid, true); }
-    ir(projeto ? (localStorage.getItem('gc_vista') || 'mapa') : 'projetos');
+    ir(projeto ? (localStorage.getItem('gc_vista') || 'painel') : 'projetos');
     atualizarBadge();
   }
 
   function ir(v) {
-    if (!projeto && ['mapa', 'caderneta', 'feicoes', 'arquivos'].includes(v)) v = 'projetos';
+    if (!projeto && ['painel', 'mapa', 'caderneta', 'feicoes', 'arquivos'].includes(v)) v = 'projetos';
     vista = v; localStorage.setItem('gc_vista', v);
     document.querySelectorAll('.view').forEach(s => s.classList.toggle('ativa', s.id === 'v-' + v));
     document.querySelectorAll('#nav button').forEach(b => { b.classList.toggle('ativo', b.dataset.v === v); if (b.classList.contains('req-proj')) b.disabled = !projeto; });
@@ -118,6 +118,7 @@ const App = (() => {
     $('#topo-projeto').textContent = projeto ? projeto.nome : 'Projetos';
     $('#topo-sub').textContent = projeto ? [projeto.cliente, projeto.municipio].filter(Boolean).join(' · ') || 'GeoCampo StenGEO' : (usuario ? usuario.nome : '');
     if (vista === 'projetos') renderProjetos();
+    if (vista === 'painel') renderPainel();
     if (vista === 'caderneta') renderCaderneta();
     if (vista === 'feicoes') renderFeicoes();
     if (vista === 'arquivos') renderArquivos();
@@ -150,6 +151,7 @@ const App = (() => {
             ${p._sujo ? '<span class="tag pend">pendente</span>' : ''}</div>
           <div class="linha-btns" style="margin-top:10px">
             <button class="btn peq primario" onclick="event.stopPropagation();App.abrirProjeto('${p.id}')">Abrir</button>
+            <button class="btn peq" onclick="event.stopPropagation();App.abrirProjeto('${p.id}').then(()=>App.ir('mapa'))">Mapa</button>
             <button class="btn peq" onclick="event.stopPropagation();App.editarProjeto('${p.id}')">Editar</button>
           </div>
         </div>`).join('')}</div>`
@@ -158,16 +160,106 @@ const App = (() => {
     const b = $('#busca-proj'); if (q && b) { b.focus(); b.setSelectionRange(q.length, q.length); }
   }
 
+  /* ======================= PAINEL DO PROJETO ======================= */
+  let equipeCache = null;
+  async function renderPainel() {
+    if (!projeto) return;
+    const F = cache.feicoes, n = t => F.filter(f => f.tipo === t).length;
+    const compTot = F.filter(f => f.tipo === 'LineString').reduce((s, f) => s + (Geo.medidas(f.geometria).comprimento || 0), 0);
+    const areaTot = F.filter(f => f.tipo === 'Polygon').reduce((s, f) => s + (Geo.medidas(f.geometria).area || 0), 0);
+    const imp = cache.arquivos;
+    const camadas = imp.filter(a => !a.pacote && Mapa.ehCamada(a.nome));
+    const docs = imp.filter(a => !a.pacote && !Mapa.ehCamada(a.nome));
+    const pacotes = imp.filter(a => a.pacote);
+    const ult = await DB.kv('sync_' + projeto.id);
+    const linhaPainel = a => { const e2 = Mapa.estiloDe(a); return `<div class="camada-linha"><span class="amostra" style="${/\.tiff?$/i.test(a.nome) ? 'background:linear-gradient(135deg,#6b8e23,#c2b280);border-color:#6b8e23' : `border-color:${e2.cor};background:${(e2.preenchimento || e2.cor)}${e2.opacidadePreenchimento === 0 ? '00' : '55'}`}"></span>
+      <span class="nome">${esc(Mapa.nomeCam(a))}</span><small class="mudo">${a.tamanho ? fmtTam(a.tamanho) : ''}</small>
+      <button class="btn peq" onclick="App.arquivoNoMapa('${a.id}')">Mapa</button></div>`; };
+    const arvoreHtml = camadas.length ? Mapa.arvoreHtml(camadas.sort((a, b) => (a.ordem ?? 1e9) - (b.ordem ?? 1e9)), linhaPainel, false)
+      : '<p class="mudo">Nenhuma camada importada. Envie o projeto do QGIS compactado em Arquivos.</p>';
+    const recentes = [...cache.caderneta.map(c => ({ t: c.data + 'T' + (c.horaInicio || '00:00'), txt: `✎ ${c.atividade}${c.titulo ? ' — ' + c.titulo : ''}`, a: `App.abrirCaderneta('${c.id}')` })),
+      ...F.map(f => ({ t: f.criadoEm, txt: `${PREFIXO[f.tipo]} ${f.codigo} ${f.titulo || f.categoria || ''}`, a: `App.abrirFeicao('${f.id}')` }))]
+      .sort((a, b) => String(b.t).localeCompare(String(a.t))).slice(0, 6);
+    $('#v-painel').innerHTML = `<div class="conteudo">
+      <div class="card painel-cab">
+        <div class="linha-btns"><div class="esp"><h2 style="margin:0">${esc(projeto.nome)}</h2>
+          <div class="meta">${esc([projeto.cliente, projeto.municipio].filter(Boolean).join(' · ') || 'Sem cliente/município')}</div></div>
+          <button class="btn" onclick="App.editarProjeto('${projeto.id}')">Editar</button>
+          <button class="btn primario" onclick="App.exportarQGIS()">⇩ Exportar QGIS</button></div>
+        <div class="ficha">
+          <div><small>Responsável técnico</small><b>${esc(projeto.responsavel || '—')}</b></div>
+          <div><small>Contrato / proposta</small><b>${esc(projeto.contrato || '—')}</b></div>
+          <div><small>Criado em</small><b>${fmtData(projeto.criadoEm) || '—'}</b></div>
+          <div><small>Última sincronização</small><b>${ult ? fmtData(ult) : 'pendente'}</b></div>
+        </div>
+        ${projeto.descricao ? `<p style="margin:10px 0 0">${esc(projeto.descricao)}</p>` : ''}
+      </div>
+
+      <div class="atalhos">
+        <button onclick="App.ir('mapa')"><span>◉</span><b>Mapa</b><small>${camadas.length} camada(s) · ${F.length} feição(ões)</small></button>
+        <button onclick="App.ir('caderneta')"><span>✎</span><b>Caderneta</b><small>${cache.caderneta.length} anotação(ões)</small></button>
+        <button onclick="App.ir('feicoes')"><span>⌖</span><b>Feições</b><small>${n('Point')} pontos · ${n('LineString')} linhas · ${n('Polygon')} polígonos</small></button>
+        <button onclick="App.ir('arquivos')"><span>▤</span><b>Arquivos</b><small>${imp.length} importado(s) · ${cache.fotos.length} foto(s)</small></button>
+      </div>
+
+      <div class="painel-grade">
+        <div class="card">
+          <h4>Estrutura do projeto</h4>
+          <div class="arvore" style="max-height:none">
+            <details class="grupo-cam" open><summary><span class="pasta-ic">📱</span><b>Registrado no app</b></summary><div class="grupo-corpo">
+              <div class="camada-linha" onclick="App.verTipo('Point')" style="cursor:pointer"><span class="amostra" style="border-color:#e6194b;background:#e6194b;border-radius:50%"></span><span class="nome">Pontos</span><small>${n('Point')}</small></div>
+              <div class="camada-linha" onclick="App.verTipo('LineString')" style="cursor:pointer"><span class="amostra" style="border-color:#4363d8;height:4px;background:#4363d8"></span><span class="nome">Linhas</span><small>${n('LineString')}${compTot ? ' · ' + Geo.fmtDist(compTot) : ''}</small></div>
+              <div class="camada-linha" onclick="App.verTipo('Polygon')" style="cursor:pointer"><span class="amostra" style="border-color:#3cb44b;background:#3cb44b55"></span><span class="nome">Polígonos</span><small>${n('Polygon')}${areaTot ? ' · ' + Geo.fmtArea(areaTot) : ''}</small></div>
+              <div class="camada-linha" onclick="App.ir('arquivos');App.pasta('Fotos de campo')" style="cursor:pointer"><span>📷</span><span class="nome">Fotos de campo</span><small>${cache.fotos.length}</small></div>
+              <div class="camada-linha" onclick="App.ir('caderneta')" style="cursor:pointer"><span>✎</span><span class="nome">Caderneta de campo</span><small>${cache.caderneta.length}</small></div>
+            </div></details>
+            <details class="grupo-cam" open><summary><span class="pasta-ic">🗺</span><b>Camadas importadas</b> <small class="mudo">(${camadas.length})</small></summary><div class="grupo-corpo">${arvoreHtml}</div></details>
+            ${pacotes.length ? `<details class="grupo-cam"><summary><span class="pasta-ic">📦</span><b>Pacotes enviados</b> <small class="mudo">(${pacotes.length})</small></summary><div class="grupo-corpo">
+              ${pacotes.map(a => `<div class="camada-linha"><span class="nome">${esc(a.nome)}</span><small class="mudo">${fmtTam(a.tamanho || 0)}${a.temProjeto ? ' · projeto QGIS' : ''}</small><button class="btn peq" onclick="App.baixarArquivo('${a.id}')">Baixar</button></div>`).join('')}</div></details>` : ''}
+            ${docs.length ? `<details class="grupo-cam"><summary><span class="pasta-ic">📄</span><b>Documentos e outros</b> <small class="mudo">(${docs.length})</small></summary><div class="grupo-corpo">
+              ${docs.map(a => `<div class="camada-linha"><span class="nome">${esc(a.nome)}</span><small class="mudo">${esc(a.pasta)}</small><button class="btn peq" onclick="App.baixarArquivo('${a.id}')">Baixar</button></div>`).join('')}</div></details>` : ''}
+          </div>
+        </div>
+
+        <div>
+          <div class="card">
+            <div class="linha-btns"><h4 class="esp" style="margin:0">Equipe</h4><button class="btn peq" onclick="App.editarProjeto('${projeto.id}')">Gerenciar</button></div>
+            <div id="painel-equipe" style="margin-top:8px"><p class="mudo">Carregando…</p></div>
+          </div>
+          <div class="card" style="margin-top:12px">
+            <h4>Atividade recente</h4>
+            ${recentes.length ? recentes.map(r => `<div class="camada-linha" style="cursor:pointer" onclick="${r.a}"><span class="nome">${esc(r.txt)}</span><small class="mudo">${fmtData(r.t)}</small></div>`).join('') : '<p class="mudo">Nenhum registro ainda.</p>'}
+          </div>
+        </div>
+      </div>
+    </div>`;
+    carregarEquipe();
+  }
+
+  async function carregarEquipe() {
+    const el = $('#painel-equipe'); if (!el || !projeto) return;
+    const basica = () => [projeto.criadoPor, ...(projeto.membros || [])].filter((e, i, a) => e && a.indexOf(e) === i).map(e => ({ email: e, nome: '', criador: e === projeto.criadoPor }));
+    let eq = equipeCache;
+    if (!eq && navigator.onLine && API.token()) { try { eq = (await API.chamar('equipeProjeto', { id: projeto.id })).equipe; equipeCache = eq; } catch (e) { eq = null; } }
+    eq = eq || basica();
+    const ini = s => (s || '?').split(/\s+/).map(x => x[0]).slice(0, 2).join('').toUpperCase();
+    el.innerHTML = eq.map(p => `<div class="membro"><span class="avatar">${esc(ini(p.nome || p.email))}</span>
+      <div class="esp"><b>${esc(p.nome || p.email)}</b>${p.criador ? ' <span class="tag">responsável</span>' : ''}
+      <br><small class="mudo">${esc(p.nome ? p.email : '')}${p.funcao ? ' · ' + esc(p.funcao) : ''}</small></div>
+      ${p.status === 'nao_cadastrado' ? '<span class="tag pend">sem cadastro</span>' : p.status && p.status !== 'aprovado' ? `<span class="tag pend">${esc(p.status)}</span>` : ''}</div>`).join('')
+      || '<p class="mudo">Só você neste projeto.</p>';
+  }
+
   async function abrirProjeto(id, silencioso) {
     projeto = await DB.get('projetos', id);
     if (!projeto) return;
     localStorage.setItem('gc_projeto', id);
     await recarregarCache();
     if (Mapa.limparCamadas) { try { Mapa.limparCamadas(); } catch (e) {} }
-    if (!silencioso) ir('mapa');
+    equipeCache = null;
     Mapa.iniciar(); redesenharMapa();
     Mapa.restaurarCamadas(cache.arquivos);
-    if (!silencioso) setTimeout(() => Mapa.enquadrarProjeto(), 300);
+    if (!silencioso) { ir('painel'); setTimeout(() => Mapa.enquadrarProjeto(), 600); }
     if (navigator.onLine) sincronizarTudo(false);
   }
 
@@ -835,7 +927,7 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
         <small>Projeto do QGIS compactado (.zip com shapefiles, GeoPackage, GeoTIFF, KML…), .gpkg, .kml/.kmz, .geojson, .gpx, .csv, .tif, PDF, planilhas…</small></div>
       <label class="chk" style="margin-top:-6px"><input type="checkbox" id="arq-compart" ${compart ? 'checked' : ''} onchange="localStorage.setItem('gc_compartilhar',this.checked?'1':'0')"> Enviar para o servidor e compartilhar com a equipe do projeto</label>
       ${lista.length ? `<div style="overflow-x:auto"><table class="tabela"><thead><tr><th>Arquivo</th><th>Pasta</th><th>Tamanho</th><th>Enviado</th><th></th></tr></thead><tbody>
-        ${lista.map(a => `<tr><td><b>${esc(a.nome)}</b><br>${a.local ? '<span class="tag local">só neste aparelho</span>' : a.driveId ? '<span class="tag ok">no servidor</span>' : '<span class="tag pend">aguardando envio</span>'}
+        ${lista.map(a => `<tr><td><b>${esc(a.nomeCamada || a.nome)}</b>${a.nomeCamada ? `<br><small class="mudo">${esc(a.nome)}</small>` : ''}${a.grupo ? `<br><small>📁 ${esc(a.grupo)}</small>` : ''}<br>${a.local ? '<span class="tag local">só neste aparelho</span>' : a.driveId ? '<span class="tag ok">no servidor</span>' : '<span class="tag pend">aguardando envio</span>'}
             ${a.pacoteNome ? `<span class="tag">do pacote ${esc(a.pacoteNome)}</span>` : ''}</td>
           <td><select style="margin:0;padding:4px" onchange="App.moverArquivo('${a.id}',this.value)">${PASTAS.map(p => `<option ${p.id === a.pasta ? 'selected' : ''}>${p.id}</option>`).join('')}</select></td>
           <td>${a.tamanho ? fmtTam(a.tamanho) : ''}</td><td><small>${esc(a.autorNome || a.autor || '')}<br>${fmtData(a.criadoEm)}</small></td>
@@ -899,19 +991,25 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
       const e = Mapa.extensao(file.name);
       try {
         if (e === 'zip' || e === 'gpkg') {
-          let itens = null;
+          let itens = null, temProjeto = false;
           if (e === 'zip') {
             toast('Analisando ' + file.name + '…');
             const info = await GIS.analisarZip(file);
-            if (info.pacote) itens = await GIS.importarPacote(info, t => toast(t));
-          } else itens = await GIS.gpkgParaCamadas(file);
+            if (info.pacote) ({ itens, temProjeto } = await GIS.importarPacote(info, t => toast(t)));
+          } else itens = (await GIS.gpkgParaCamadas(file)).map((it, i) => Object.assign(it, { ordem: i, visivel: true }));
           if (itens) {
-            const pac = await registrarArquivo(file, file.name, 'Projetos QGIS', { pacote: true });
+            const nomePac = file.name.replace(/\.(zip|gpkg)$/i, '');
+            const pac = await registrarArquivo(file, file.name, 'Projetos QGIS', { pacote: true, temProjeto });
+            const base0 = (cache.arquivos.reduce((m, a) => Math.max(m, a.ordem ?? -1), -1)) + 1;
             for (const it of itens) {
-              const a = await registrarArquivo(it.blob, it.nome, it.pasta, { pacoteId: pac.id, pacoteNome: file.name, visivel: it.camada });
-              if (it.camada) mostrar.push(a);
+              const a = await registrarArquivo(it.blob, it.nome, it.pasta, {
+                pacoteId: pac.id, pacoteNome: file.name, visivel: it.visivel !== false,
+                nomeCamada: it.nomeCamada || null, grupo: [nomePac, it.grupo].filter(Boolean).join(' / '),
+                ordem: base0 + (it.ordem || 0), estilo: it.estilo || null
+              });
+              if (it.camada && a.visivel) mostrar.push(a);
             }
-            toast(`${file.name}: ${itens.length} camada(s) importada(s).`);
+            toast(`${file.name}: ${itens.length} camada(s) importada(s)${temProjeto ? ' com grupos e estilos do projeto QGIS' : ''}.`);
             n++; continue;
           }
         }
@@ -925,8 +1023,8 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
     await recarregarCache();
     if (mostrar.length) {
       Mapa.iniciar();
-      for (const a of mostrar) { try { await Mapa.mostrarCamada(a); } catch (err) { toast(`${a.nome}: ${err.message}`, true); } }
-      Mapa.enquadrarProjeto();
+      for (const a of mostrar.sort((x, y) => (y.ordem ?? 0) - (x.ordem ?? 0))) { try { toast('Carregando ' + (a.nomeCamada || a.nome) + '…'); await Mapa.mostrarCamada(a); } catch (err) { toast(`${a.nome}: ${err.message}`, true); } }
+      Mapa.reordenar(); Mapa.enquadrarProjeto();
     }
     if (n) toast(n + ' arquivo(s) importado(s).' + (mostrar.length ? ' Camadas adicionadas ao mapa.' : ''));
     if (vista === 'arquivos') renderArquivos();
@@ -1125,7 +1223,7 @@ ${fc.features.map(f => `<Placemark><name>${xe(f.properties.codigo)}</name><descr
   document.addEventListener('DOMContentLoaded', iniciar);
 
   return {
-    esc, toast, modal, fecharModal, corDe, projetoAtual, ir, renderProjetos, abrirProjeto, editarProjeto, salvarProjeto, excluirProjeto,
+    esc, toast, modal, fecharModal, renderPainel, corDe, projetoAtual, ir, renderProjetos, abrirProjeto, editarProjeto, salvarProjeto, excluirProjeto,
     novaFeicao, abrirFeicao, salvarFeicao, excluirFeicao, editarGeom, verNoMapa, addAttr, filtrar, exportar, baixarExport,
     adicionarFotos, verFoto, excluirFoto, ia, ditar, aplicarIA, renderCaderneta, abrirCaderneta, salvarCaderneta, excluirCaderneta, relatorio,
     pasta, verTipo, exportarQGIS, escolherArquivos, baixarArquivo, baixarFotos, arquivoNoMapa, moverArquivo, excluirArquivo, arquivosDoProjeto,
