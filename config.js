@@ -4,7 +4,7 @@
 // (Também é possível informar a URL na tela de login, em "Servidor".)
 // =====================================================================
 window.GEOCAMPO_CONFIG = {
-  API_URL: 'COLE_AQUI_A_URL_DO_APPS_SCRIPT',
+  API_URL: 'https://script.google.com/macros/s/AKfycbxBIyUQyBoU0PlkG0Gp0nuKfB29SUqfANzv2RW-rFRU8nK7qvXgs0jID46__uSInUp4/exec',
   EMPRESA: 'StenGEO',
   NOME_APP: 'GeoCampo StenGEO',
 
