@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#0b4f9c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>GeoCampo StenGEO</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="img/icon-192.png">
+<link rel="apple-touch-icon" href="img/icon-192.png">
+<link rel="stylesheet" href="lib/leaflet.css">
+<link rel="stylesheet" href="lib/leaflet-geoman.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- ===================== LOGIN ===================== -->
+<div id="tela-login" class="login">
+  <div class="login-card">
+    <img src="img/logo.png" alt="StenGEO" class="login-logo">
+    <h1>GeoCampo</h1>
+    <p class="sub">Caderneta de campo digital</p>
+    <div class="abas">
+      <button class="aba ativa" data-aba="entrar">Entrar</button>
+      <button class="aba" data-aba="cadastrar">Criar conta</button>
+    </div>
+    <form id="form-login" autocomplete="on">
+      <div class="so-cadastro"><label>Nome completo<input name="nome" autocomplete="name"></label></div>
+      <div class="so-cadastro"><label>Função / cargo<input name="funcao" placeholder="Ex.: Geólogo, Técnico de campo"></label></div>
+      <label>E-mail<input name="email" type="email" required autocomplete="email"></label>
+      <label>Senha<input name="senha" type="password" required minlength="6" autocomplete="current-password"></label>
+      <button class="btn primario largo" type="submit" id="btn-login">Entrar</button>
+      <p id="login-msg" class="msg"></p>
+    </form>
+    <details class="servidor">
+      <summary>Servidor</summary>
+      <label>URL do Apps Script<input id="cfg-url" placeholder="https://script.google.com/macros/s/.../exec"></label>
+      <button class="btn" id="btn-salvar-url" type="button">Salvar servidor</button>
+    </details>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app" hidden>
+  <header class="topo">
+    <img src="img/logo.png" alt="" class="topo-logo" onclick="App.ir('projetos')">
+    <div class="topo-titulo">
+      <strong id="topo-projeto">Projetos</strong>
+      <small id="topo-sub">GeoCampo StenGEO</small>
+    </div>
+    <button class="btn-icone" id="btn-sync" title="Sincronizar" onclick="App.sincronizarTudo(true)">
+      <span class="ic">⟳</span><span id="sync-badge" class="badge" hidden>0</span>
+    </button>
+  </header>
+
+  <nav class="nav" id="nav">
+    <button data-v="projetos"><span class="ic">▦</span><span>Projetos</span></button>
+    <button data-v="mapa" class="req-proj"><span class="ic">◉</span><span>Mapa</span></button>
+    <button data-v="caderneta" class="req-proj"><span class="ic">✎</span><span>Caderneta</span></button>
+    <button data-v="feicoes" class="req-proj"><span class="ic">⌖</span><span>Feições</span></button>
+    <button data-v="arquivos" class="req-proj"><span class="ic">▤</span><span>Arquivos</span></button>
+    <button data-v="config"><span class="ic">⚙</span><span>Ajustes</span></button>
+  </nav>
+
+  <main id="main">
+    <section id="v-projetos" class="view"></section>
+
+    <section id="v-mapa" class="view view-mapa">
+      <div id="mapa"></div>
+      <div class="mapa-info" id="mapa-info">GPS desligado</div>
+      <div class="fab-col">
+        <button class="fab" title="Camadas" onclick="Mapa.painelCamadas()">☰</button>
+        <button class="fab" id="fab-gps" title="Minha localização" onclick="Mapa.alternarGPS()">◎</button>
+        <button class="fab destaque" title="Ponto na posição do GPS" onclick="Mapa.pontoGPS()">📍</button>
+        <button class="fab" title="Desenhar ponto" onclick="Mapa.desenhar('Marker')">•</button>
+        <button class="fab" title="Desenhar linha" onclick="Mapa.desenhar('Line')">⟋</button>
+        <button class="fab" title="Desenhar polígono" onclick="Mapa.desenhar('Polygon')">⬠</button>
+        <button class="fab" id="fab-trilha" title="Gravar trilha GPS" onclick="Mapa.alternarTrilha()">⦿</button>
+        <button class="fab" title="Baixar mapa para uso offline" onclick="Mapa.baixarOffline()">⇩</button>
+      </div>
+      <div class="barra-edicao" id="barra-edicao" hidden>
+        <span id="barra-edicao-txt">Editando geometria</span>
+        <button class="btn primario" id="barra-edicao-ok">Concluir</button>
+        <button class="btn" id="barra-edicao-cancelar">Cancelar</button>
+      </div>
+    </section>
+
+    <section id="v-caderneta" class="view"></section>
+    <section id="v-feicoes" class="view"></section>
+    <section id="v-arquivos" class="view"></section>
+    <section id="v-config" class="view"></section>
+  </main>
+</div>
+
+<div id="modal" class="modal" hidden><div class="modal-caixa" id="modal-caixa"></div></div>
+<div id="visor" class="visor" hidden onclick="this.hidden=true"><img id="visor-img" alt=""></div>
+<div id="toast" class="toast" hidden></div>
+<input type="file" id="in-foto-camera" accept="image/*" capture="environment" hidden>
+<input type="file" id="in-foto-galeria" accept="image/*" multiple hidden>
+<input type="file" id="in-arquivo" multiple hidden>
+
+<script src="config.js"></script>
+<script src="lib/leaflet.js"></script>
+<script src="lib/leaflet-geoman.min.js"></script>
+<script src="lib/proj4.js"></script>
+<script src="js/db.js"></script>
+<script src="js/geo.js"></script>
+<script src="js/api.js"></script>
+<script src="js/mapa.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
