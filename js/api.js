@@ -1,8 +1,9 @@
 /* Comunicação com o servidor (Apps Script), sincronização e IA */
 const API = (() => {
   const C = window.GEOCAMPO_CONFIG;
-  const url = () => localStorage.getItem('gc_api_url') || C.API_URL;
-  const configurado = () => /^https:\/\/script\.google(usercontent)?\.com\//.test(url() || '');
+  const valida = u => /^https:\/\/script\.google(usercontent)?\.com\/.+\/exec$/.test(String(u || '').trim());
+  const url = () => valida(C.API_URL) ? C.API_URL : (localStorage.getItem('gc_api_url') || '').trim();
+  const configurado = () => valida(url());
   const token = () => localStorage.getItem('gc_token');
 
   async function chamar(acao, dados = {}) {

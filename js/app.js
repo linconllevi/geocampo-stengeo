@@ -64,7 +64,7 @@ const App = (() => {
       f.nome.required = modo === 'cadastrar';
     });
     $('#cfg-url').value = localStorage.getItem('gc_api_url') || (API.configurado() ? API.url() : '');
-    $('#btn-salvar-url').onclick = () => { localStorage.setItem('gc_api_url', $('#cfg-url').value.trim()); msg('Servidor salvo.', true); };
+    $('#btn-salvar-url').onclick = () => { const u = $('#cfg-url').value.trim(); if (!/\/exec$/.test(u)) return msg('A URL deve terminar em /exec.'); localStorage.setItem('gc_api_url', u); msg('Servidor salvo.', true); };
     const msg = (t, ok) => { const m = $('#login-msg'); m.textContent = t; m.className = 'msg ' + (ok ? 'ok' : 'erro'); };
     f.onsubmit = async e => {
       e.preventDefault();

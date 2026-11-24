@@ -1,5 +1,5 @@
 /* Service worker: app offline + cache dos blocos do mapa */
-const VERSAO = 'geocampo-v1.0.1';
+const VERSAO = 'geocampo-v1.0.2';
 const SHELL = [
   './', 'index.html', 'config.js', 'manifest.webmanifest', 'css/app.css',
   'js/db.js', 'js/geo.js', 'js/api.js', 'js/mapa.js', 'js/app.js',
